@@ -1,0 +1,262 @@
+---
+title: "PGB 2020 project analysis"
+output: html_document
+---
+
+I am using Rmarkdown to show some results. The advantage is that in the same document I can show the code, execute it, show the results of such a code and comment the results and methods.
+
+First we are going to load some libraries that we will use. They have install instructions in commented lines (if you don't have such libraries):
+```{r echo = TRUE, include = FALSE}
+library(ggplot2)
+#install.packages('doBy')
+#install.packages('RSQLite')
+#install.packages('DBI')
+#install.packages("refGenome")
+#install.packages("/cloud/project/refGenome_1.7.7.tar.gz", repos = NULL, type = "source")
+library(refGenome)
+#install.packages("wesanderson")
+library(wesanderson)
+#install.packages("kableExtra")
+library(kableExtra)
+#install.packages("dplyr")
+library(dplyr)
+#install.packages("knitr")
+library(knitr)
+
+
+#Modify main_dir accordingly
+
+#main_dir="/cloud/project/"
+main_dir="/media/jl/DATADRIVE/pgb2021_project/pgb2021"
+
+raw_dir=paste0(main_dir,"/data/PGB2021_raw_files")
+```
+# Yeast Genomes
+
+## Gathering the data
+First a basic look at number of contigs / chromosomes in the different species.
+
+```{r echo = TRUE, results = 'Summary Table', include=TRUE}
+file.list<- list.files(path=paste0(main_dir,'/results/'), pattern='*fasta_*', recursive = TRUE, full.names = FALSE)
+fasta_data<-data.frame()
+
+#Concatenate all datasets together. File name as column
+for (f in file.list) {
+    #set filename and dataset
+    df <- read.table(paste0(main_dir,'/results/',f), sep='\t', header=FALSE)
+    df$fname <- f
+    df$species <- unlist(strsplit(f,'_'))[1]
+    fasta_data <- rbind(fasta_data, df)
+}
+
+#Change name of variables
+names(fasta_data)<-c('contig','length','fname','species')
+
+#Summary of the data, grouping by species!
+fasta_summary <- fasta_data %>% group_by(species) %>% summarise(ncontigs=n(), length=sum(length))
+```
+
+## Exploratory plots
+
+### Genome sizes / assemblies
+```{r echo = TRUE, include = TRUE, fig.width = 10, fig.height=8}
+
+ggplot(data=fasta_summary, aes(x=reorder(species, ncontigs), y=ncontigs, fill=species)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_text(aes(label=paste0(round(length/1000000,2),'Mb')), vjust=0.5, hjust=-0.1, color="black",
+            position = position_dodge(0.9), size=3.5) +
+            scale_fill_brewer(palette="Set3") +
+  theme_minimal() +
+  ylab('Number of contigs')+
+  xlab('Species')+
+  labs(fill='Dataset') +
+  coord_flip()
+```
+
+### Contig length distributions
+```{r echo = TRUE, include = TRUE, fig.width = 10, fig.height=8}
+
+  ggplot(data=fasta_data, aes(x=species, y=length/1000)) +
+    geom_jitter(aes(color=species)) +
+    scale_color_brewer(palette="Set3") +
+    theme_minimal() +
+    ylab('Contig sizes (Kb)')+
+    xlab('Species')+
+    labs(fill='Dataset') +
+    coord_flip()
+```
+
+# Transcriptomic reconstructions
+Next we are going to load the dataset basic statistics that we generated with the bash script from your files, so we can plot it.
+
+## Basic statistics
+```{r echo = TRUE, include = TRUE, results = 'Summary Table'}
+summary_table <- read.table(paste0(main_dir,'/results/basic_statistics.tsv'), sep='\t', header=TRUE)
+summary_table$binomial <- paste0(summary_table$genus,' ',summary_table$species)
+
+kbl(summary_table) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+```
+
+### Number of reconstructed transcripts per species
+```{r echo = TRUE, include = TRUE, fig.width = 10, fig.height=8}
+ggplot(data=summary_table, aes(x=reorder(binomial,num_transcripts), y=num_transcripts, fill=dataset)) +
+  geom_bar(stat="identity", position=position_dodge()) +
+  geom_text(aes(label=num_transcripts), vjust=0.5, hjust=-0.1, color="black",
+            position = position_dodge(0.9), size=3.5) +
+  scale_fill_brewer(palette="Paired") +
+  theme_minimal() +
+  xlab('Number of reconstructed transcripts')+
+  ylab('Species')+
+  labs(fill='Dataset') +
+  coord_flip()
+```
+
+### Remember the tree
+
+```{r yeast_tree, echo=FALSE, fig.cap="yeast evolotionary tree", out.width = '100%'}
+knitr::include_graphics(paste0(main_dir,"metadata/tree.png"))
+```
+
+### Average size of transcripts
+
+```{r echo = TRUE, include = TRUE, fig.width = 10, fig.height=8}
+ggplot(data=summary_table, aes(x=reorder(binomial,total_transcript_length), y=((total_transcript_length/num_transcripts)/1000), fill=dataset)) +
+    geom_bar(stat="identity", position=position_dodge()) +
+    geom_text(aes(label=paste0(round((total_transcript_length/num_transcripts)/1000,2),' Kb')), vjust=0.5, hjust=-0.1, color="black",
+              position = position_dodge(0.9), size=3.5) +
+    scale_fill_brewer(palette="Set1") +
+    theme_minimal() +
+    xlab('Reconstructed transcript length / Number of reconstructed transcripts')+
+    ylab('Species')+
+    labs(fill='Dataset') +
+    coord_flip()
+```
+
+## Load the gff datasets
+
+Construct our big dataset from student's independent files (known and novel gff)
+
+```{r echo = TRUE, include = TRUE}
+
+raw_data <- data.frame() #Start empty
+setwd(raw_dir)
+
+##Known
+#Search all files that meet the pattern "know"
+file.list<- list.files(path=raw_dir, pattern='*know*', recursive = TRUE, full.names = FALSE)
+
+#Concatenate all datasets together. File name as column
+for (f in file.list) {
+    dataset <- ensemblGenome()
+    print(f)
+    read.gtf(dataset,f)
+    df <- as.data.frame(dataset@ev$gtf)
+    #set filename and dataset
+    df$fname <- f
+    df$dataset <- 'known'
+
+  #Exception for kudria, error in format (stringtie version?)
+  #  if (grepl('kudria',f, fixed=TRUE)) {
+  #  df$ref_gene_id <- 'NA' }
+  #  raw_data <- rbind(raw_data, df)
+}
+
+##Novel
+#Search all files that meet the pattern "novel"
+file.list<- list.files(path=raw_dir, pattern='*nove*', recursive = TRUE, full.names = FALSE)
+
+#Concatenate all datasets together. File name as column
+for (f in file.list) {
+    dataset <- ensemblGenome()
+    print(f)
+    read.gtf(dataset,f)
+    df <- as.data.frame(dataset@ev$gtf)
+    #set filename and dataset
+    df$fname <- f
+    df$dataset <- 'novel'
+    #Add missing fields in novel
+    df$ref_gene_id <- 'NA'
+    df$ref_gene_name <- 'NA'
+    df$reference_id <- 'NA'#}
+    raw_data <- rbind(raw_data, df)
+}
+
+#Convert variables to numeric
+raw_data[, c(10,16,17)] <- sapply(raw_data[, c(10,16,17)], as.numeric)
+```
+
+## Merge with summary
+
+```{r echo = TRUE, include = TRUE}
+#Get info from species by joining the summary dataset
+fname2species <- summary_table %>%
+select(binomial, fname)
+
+data <- left_join(raw_data,fname2species, by="fname")
+```
+
+Now we have our dataset containing all the information in the gff files you generated, together with the species and file names. We can play a bit with it
+
+## Explore length
+```{r echo = TRUE, include = TRUE}
+
+ggplot(data, aes((end-start), fill = dataset, colour = dataset)) +
+  geom_density(alpha = 0.1)+
+  scale_fill_manual(values = wes_palette("Royal1"))+
+  scale_colour_manual(values = wes_palette("Royal1"))+
+  theme_minimal() +
+      xlab('Transcript Length')+
+      ylab('Density')+
+      labs(colour='Dataset')+
+      guides(fill=FALSE)+
+      xlim(0,7500)
+```
+
+## Explore length by species
+
+What do you see? What do you think we should plot to have more information?
+
+```{r echo = TRUE, include = TRUE, fig.width = 12, fig.height=9}
+
+ggplot(data, aes((end-start), fill = dataset, colour = dataset)) +
+  geom_density(alpha = 0.1)+
+  scale_fill_manual(values = wes_palette("Royal1"))+
+  scale_colour_manual(values = wes_palette("Royal1"))+
+  theme_minimal() +
+      xlab('Transcript Length')+
+      ylab('Density')+
+      labs(colour='Dataset')+
+      guides(fill=FALSE)+
+      facet_wrap(~binomial)+
+      xlim(0,7500)
+```
+
+## Explore expression
+```{r echo = TRUE, include = TRUE}
+
+ggplot(data, aes(log(TPM), fill = dataset, colour = dataset)) +
+  geom_density(alpha = 0.1)+
+  scale_fill_manual(values = wes_palette("Royal1"))+
+  scale_colour_manual(values = wes_palette("Royal1"))+
+  theme_minimal() +
+      xlab('log(TPM)')+
+      ylab('Density')+
+      labs(colour='Dataset')+
+      guides(fill=FALSE)
+```
+
+### Split by species
+
+```{r echo = TRUE, include = TRUE, fig.width = 12, fig.height=9}
+ggplot(data, aes(log(TPM), fill = dataset, colour = dataset)) +
+  geom_density(alpha = 0.1)+
+  scale_fill_manual(values = wes_palette("Royal1"))+
+  scale_colour_manual(values = wes_palette("Royal1"))+
+  theme_minimal() +
+      xlab('log(TPM)')+
+      ylab('Density')+
+      labs(colour='Dataset')+
+      guides(fill=FALSE)+
+      facet_wrap(~binomial)
+```

@@ -1,0 +1,11 @@
+K. lactis
+L. kluyveri
+L. thermotolerans
+L. waltii
+N. castellii
+S. bayanus
+S. cerevisiae
+S. kudriavzevii
+S. mikatae
+S. paradoxus
+S. pombe
