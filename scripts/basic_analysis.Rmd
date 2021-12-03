@@ -183,7 +183,7 @@ for (f in file.list) {
 }
 
 #Convert variables to numeric
-raw_data[, c(10,11,12)] <- sapply(raw_data[, c(10,11,12)], as.numeric)
+raw_data[, c(10,11,13)] <- sapply(raw_data[, c(10,11,13)], as.numeric)
 ```
 
 ## Merge with summary
